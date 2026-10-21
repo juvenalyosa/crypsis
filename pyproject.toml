@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=64", "pybind11>=2.10"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crypsis"
+version = "0.1.0"
+description = "Find cryptic binding pockets in protein structures: normal-mode ensembles, pocket grids and ESM-2"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Juvenal Yosa"}]
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.22", "scipy>=1.8", "gemmi>=0.6"]
+keywords = ["cryptic pockets", "drug discovery", "structural biology", "normal modes", "ESM-2", "binding sites"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Chemistry",
+]
+
+[project.optional-dependencies]
+esm = ["torch>=1.12", "fair-esm>=2.0"]
+test = ["pytest"]
+
+[project.urls]
+Homepage = "https://github.com/juvenalyosa/crypsis"
+Leonardo = "https://github.com/juvenalyosa/Leonardo"
+
+[project.scripts]
+crypsis = "crypsis.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+crypsis = ["models/*.json", "models/*.npz", "_cryptic.cpp"]
