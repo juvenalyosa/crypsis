@@ -24,8 +24,6 @@ Each predicted site comes with its pocket volume in the input structure and alon
 you whether the pocket is **already open**, **grows with motion** or **forms with motion**. Each site also comes
 with a ready-made docking box.
 
-<p align="center"><img src="docs/images/workflow.png" width="860" alt="Crypsis workflow"></p>
-
 ```
 $ crypsis predict 4ldj.cif --chains A --keep GDP,MG
 crypsis hybrid model, 170 residues, 2 sites (3 s)
@@ -204,8 +202,6 @@ The hybrid model's AUC advantage, computed from paired bootstrap resamples, is:
 A residue picked at random is a cryptic-site residue 5.3% of the time, so that is the AUPRC of a random
 predictor.
 
-<p align="center"><img src="docs/images/roc_pr.png" width="820" alt="ROC and precision-recall curves on the CryptoBench test set"></p>
-
 <p align="center"><img src="docs/images/sites_bars.png" width="860" alt="Site ranking and AUPRC on the CryptoBench test set"></p>
 
 On all 222 test structures (74,046 residues), the hybrid model reaches an AUC of 0.881 [0.862–0.897] and an
@@ -217,8 +213,6 @@ near-perfect predictions:
 | Crypsis v1 | 13.5% | 43.7% |
 | Crypsis physics | 17.1% | 46.4% |
 | Crypsis hybrid | **12.6%** | **56.3%** |
-
-<p align="center"><img src="docs/images/per_protein.png" width="420" alt="Per-protein AUC distribution"></p>
 
 ### Independent benchmark: the PocketMiner set
 
@@ -238,30 +232,23 @@ selection, which favours it in the last column. On the unseen subset the confide
 ### Eight cryptic sites from the literature
 
 None of these proteins is in the CryptoBench training set. Each cell gives the AUC within the protein and the
-rank of the first predicted site that matches the true one.
+rank of the first predicted site that matches the true one. For P2Rank and PocketMiner, the K-Ras row is without
+GDP, since those tools cannot keep a cofactor.
 
-<p align="center"><img src="docs/images/cases_methods.png" width="430" alt="Per-case comparison of four methods"></p>
+| Protein (apo → holo) | Site, as described in the literature | P2Rank | PocketMiner | Crypsis hybrid | Kind reported by Crypsis |
+|---|---|---|---|---|---|
+| K-Ras G12C + GDP (4LDJ → 6OIM) | switch-II pocket (sotorasib) | 0.76, #1 | 0.64, #1 | 0.83, **#1** | forms with motion |
+| TEM-1 β-lactamase (1ZG4 → 1PZO) | opens when helices 11/12 separate | 0.64, #1 | 0.89, #1 | 0.73, **#1** | forms with motion |
+| BCL-xL (1MAZ → 2YXJ) | BH3 groove (ABT-737) | 0.74, #1 | 0.65, #2 | 0.80, **#1** | forms with motion |
+| MDM2 (1Z1M → 1RV1) | p53 cleft (nutlin) | 0.88, #1 | 0.56, not found | 0.90, **#1** | forms with motion |
+| Glucokinase (1V4T → 1V4S) | allosteric activator site, absent in the super-open form | 0.51, not found | 0.80, #1 | 0.80, #4 (physics: 0.92, #1) | forms with motion |
+| PTP1B (2CM2 → 1T49) | needs helix α7 to unfold | 0.65, not found | 0.44, not found | 0.38, not found | – |
+| p38α (1WFC → 3HVC) | C-lobe lipid pocket | 0.52, not found | 0.61, not found | 0.41, not found | – |
+| HIV-1 RT (1DLO → 1VRT) | NNRTI pocket: Tyr181 and Tyr188 rotate | 0.76, not found | 0.65, not found | 0.63, not found | – |
 
-| Protein (apo → holo) | Site, as described in the literature | Crypsis hybrid | Kind reported by Crypsis |
-|---|---|---|---|
-| K-Ras G12C + GDP (4LDJ → 6OIM) | switch-II pocket (sotorasib) | 0.83, **site #1** | forms with motion |
-| TEM-1 β-lactamase (1ZG4 → 1PZO) | opens when helices 11/12 separate | 0.73, **site #1** | forms with motion |
-| BCL-xL (1MAZ → 2YXJ) | BH3 groove (ABT-737) | 0.80, **site #1** | forms with motion |
-| MDM2 (1Z1M → 1RV1) | p53 cleft (nutlin) | 0.90, **site #1** | forms with motion |
-| Glucokinase (1V4T → 1V4S) | allosteric activator site, absent in the super-open form | 0.80, site #4 (physics: 0.92, #1) | forms with motion |
-| PTP1B (2CM2 → 1T49) | needs helix α7 to unfold | 0.38, not found | – |
-| p38α (1WFC → 3HVC) | C-lobe lipid pocket | 0.41, not found | – |
-| HIV-1 RT (1DLO → 1VRT) | NNRTI pocket: Tyr181 and Tyr188 rotate | 0.63, not found | – |
-
-The gallery below colours each apo structure by the rank of the hybrid score within the protein, from blue (low)
-to red (high). The ligand, in green, is placed from the holo structure.
-
-<p align="center"><img src="docs/images/cases_gallery.png" width="860" alt="Eight literature cryptic sites"></p>
-
-The next figure shows why the hybrid model helps on shallow sites. It is a BRDT bromodomain (2RFJ, with the holo
-structure 7BJY), predicted by the v1 ensemble model (left) and by the hybrid model (right):
-
-<p align="center"><img src="docs/images/example_brdt.png" width="760" alt="BRDT example, v1 vs hybrid"></p>
+No method wins every case. Where Crypsis finds the site, the kind it reports ("forms with motion") agrees with the
+opening mechanism described in the literature. The three sites that every method misses are the ones that need
+unfolding, side-chain rotations or a site absent from the apo crystal.
 
 ## Speed and memory
 
