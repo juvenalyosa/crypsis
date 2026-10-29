@@ -3,4 +3,4 @@
 from .core import Chain, read_chain  # noqa: F401
 from .pipeline import predict  # noqa: F401
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
