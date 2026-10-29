@@ -36,6 +36,14 @@ def test_sparse_hessian_matches_dense(lysozyme):
     assert vals.shape == (10,) and modes.shape == (10, n, 3) and vals[0] > 1e-6
 
 
+def test_mode_signs_do_not_depend_on_lapack(lysozyme):
+    vals, modes = cp.anm_modes(lysozyme.xyz[lysozyme.ca_index])
+    flat = modes.reshape(len(vals), -1)
+    assert ((flat ** 3).sum(axis=1) > 0).all()
+    flipped = flat * np.where(np.arange(len(vals)) % 3 == 0, -1.0, 1.0)[:, None]
+    assert np.array_equal(cp.canonical_signs(flipped), flat)
+
+
 def test_conformers_have_the_requested_rmsd(lysozyme):
     vals, modes = cp.anm_modes(lysozyme.xyz[lysozyme.ca_index])
     for x in cp.conformers(lysozyme, vals, modes, n_conf=3, rmsd=2.0):
