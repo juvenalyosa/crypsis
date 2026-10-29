@@ -4,8 +4,8 @@ title: "Crypsis: cryptic binding site prediction from elastic-network motions, a
 authors:
   - family-names: Yosa
     given-names: Juvenal
-version: 0.1.0
-date-released: 2026-10-21
+version: 0.2.0
+date-released: 2026-10-29
 license: MIT
 repository-code: "https://github.com/juvenalyosa/crypsis"
 keywords: [cryptic pockets, binding sites, drug discovery, elastic network model, ESM-2]

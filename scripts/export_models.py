@@ -1,11 +1,13 @@
 """Export the trained scikit-learn models to plain arrays (no pickle in the package).
 
-    python scripts/export_models.py final_models.pkl src/crypsis/models
+    python scripts/export_models.py work/final_models_v3_650M_256.pkl src/crypsis/models 650M
+    python scripts/export_models.py work/final_models_v3_150M_128.pkl src/crypsis/models 150M --hybrid-only
 
-The pickle holds the residue propensity table, the PCA of the ESM-2 embeddings and the two
-HistGradientBoostingClassifier models (physics, hybrid) fitted on the CryptoBench training folds.
-Writes physics_v2.npz, hybrid_v2.npz (trees + PCA) and propensity.json, then checks that crypsis'
-own tree evaluator reproduces scikit-learn's probabilities.
+The pickle (scripts/cryptobench.py train) holds the residue propensity table, the PCA of the ESM-2 embeddings and
+the two HistGradientBoostingClassifier models (physics, hybrid) fitted on the CryptoBench training folds.  Writes
+the physics model, the hybrid of that ESM-2 size (trees + PCA) and propensity.json under the names of
+pipeline.MODEL_FILES, then checks that crypsis' own tree evaluator reproduces scikit-learn's probabilities.  The
+150M pickle has the same physics model and propensities as the 650M one (same data and seed), hence --hybrid-only.
 """
 import json
 import os
@@ -13,6 +15,8 @@ import pickle
 import sys
 
 import numpy as np
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
 
 def trees(model):
@@ -39,28 +43,40 @@ def trees(model):
 
 
 def main():
-    src, dst = sys.argv[1], sys.argv[2]
-    m = pickle.load(open(src, "rb"))
+    src, dst, esm = sys.argv[1], sys.argv[2], sys.argv[3]
+    hybrid_only = "--hybrid-only" in sys.argv[4:]
     import sklearn
 
-    meta = {"sklearn": sklearn.__version__, "trained_on": "CryptoBench training folds 0-3 (Skrhak et al., 2025)"}
-    np.savez_compressed(os.path.join(dst, "physics_v2.npz"), **trees(m["phys"]), meta=json.dumps(meta))
-    np.savez_compressed(os.path.join(dst, "hybrid_v2.npz"), **trees(m["hyb"]), pca_mean=m["pca"].mean_,
-                        pca_components=m["pca"].components_, meta=json.dumps(dict(meta, esm="esm2_t30_150M_UR50D")))
-    with open(os.path.join(dst, "propensity.json"), "w") as fh:
-        json.dump(m["prop"], fh, indent=1, sort_keys=True)
-
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
     from crypsis.gbm import TreeEnsemble
+    from crypsis.pipeline import ESM_MODELS, MODEL_FILES
+
+    m = pickle.load(open(src, "rb"))
+    n_phys = m["phys"].n_features_in_
+    meta = {"sklearn": sklearn.__version__, "trained_on": "CryptoBench training folds 0-3 (Skrhak et al., 2025)",
+            "physics_columns": int(n_phys)}
+    written = []
+    if not hybrid_only:
+        np.savez_compressed(os.path.join(dst, MODEL_FILES["physics"]), **trees(m["phys"]), meta=json.dumps(meta))
+        with open(os.path.join(dst, "propensity.json"), "w") as fh:
+            json.dump(m["prop"], fh, indent=1, sort_keys=True)
+        written.append(("phys", MODEL_FILES["physics"]))
+    name, layer, dim = ESM_MODELS[esm]
+    if m["pca"].components_.shape[1] != dim:
+        raise SystemExit(f"the pickle's PCA is for {m['pca'].components_.shape[1]}-dim embeddings, not ESM-2 {esm}")
+    hyb_file = MODEL_FILES[f"hybrid_{esm}"]
+    np.savez_compressed(os.path.join(dst, hyb_file), **trees(m["hyb"]), pca_mean=m["pca"].mean_,
+                        pca_components=m["pca"].components_,
+                        meta=json.dumps(dict(meta, esm=name, esm_layer=layer, pcs=int(m["pca"].n_components_))))
+    written.append(("hyb", hyb_file))
 
     rng = np.random.default_rng(0)
-    for key, name in (("phys", "physics_v2.npz"), ("hyb", "hybrid_v2.npz")):
+    for key, fname in written:
         X = rng.random((5000, m[key].n_features_in_))
         if key == "hyb":
-            X[:, 22:] = rng.normal(scale=3.0, size=(5000, 128))
+            X[:, n_phys:] = rng.normal(scale=3.0, size=(5000, m[key].n_features_in_ - n_phys))
         ref = m[key].predict_proba(X)[:, 1]
-        got = TreeEnsemble.load(os.path.join(dst, name)).predict_proba(X)
-        print(name, "max |difference| vs scikit-learn:", float(np.abs(ref - got).max()))
+        got = TreeEnsemble.load(os.path.join(dst, fname)).predict_proba(X)
+        print(fname, "max |difference| vs scikit-learn:", float(np.abs(ref - got).max()))
         assert np.abs(ref - got).max() < 1e-9
 
 
