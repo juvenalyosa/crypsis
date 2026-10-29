@@ -17,7 +17,7 @@ def write_csv(result, path):
 
 def write_sites(result, path):
     with open(path, "w") as fh:
-        json.dump({"model": result["model"], "sites": result["sites"]}, fh, indent=1)
+        json.dump({"model": result["model"], "esm": result.get("esm"), "sites": result["sites"]}, fh, indent=1)
 
 
 def write_structure(result, source, path):

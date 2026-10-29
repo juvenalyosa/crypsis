@@ -1,4 +1,4 @@
-"""Command line: crypsis predict structure.cif [--chains A] [--keep auto] [--model auto] [-o out]"""
+"""Command line: crypsis predict structure.cif [--chains A] [--keep auto] [--model auto] [--esm 650M] [-o out]"""
 
 import argparse
 import os
@@ -19,7 +19,7 @@ def _predict(args):
             print(f"\r  ensemble {k}/{n}", end="", file=sys.stderr, flush=True)
 
     res = predict(args.structure, chains=chains, keep_cofactors=keep, model=args.model, device=args.device,
-                  progress=progress)
+                  progress=progress, esm=args.esm)
     if not args.quiet:
         print(file=sys.stderr)
     os.makedirs(args.out, exist_ok=True)
@@ -31,7 +31,8 @@ def _predict(args):
     output.write_sites(res, stem + "_sites.json")
     output.write_structure(res, args.structure, stem + "_crypsis.pdb")
     output.write_pymol(res, stem + "_crypsis.pdb", stem + "_crypsis.pml")
-    print(f"crypsis {res['model']} model, {len(res['residues'])} residues, {len(res['sites'])} sites "
+    name = f"{res['model']} (ESM-2 {res['esm']})" if res.get("esm") else res["model"]
+    print(f"crypsis {name} model, {len(res['residues'])} residues, {len(res['sites'])} sites "
           f"({time.time() - t0:.0f} s{'' if res['extension'] else ', numpy grid: the C++ extension is not built'})")
     print(f"{'rank':>4} {'score':>6} {'n':>3}  {'kind':<18} {'volume A3 (structure -> ensemble)':<34} residues")
     for s in res["sites"][:args.top]:
@@ -51,6 +52,8 @@ def main(argv=None):
     p.add_argument("--keep", help="cofactors to keep as occupied space: 'auto' or names, e.g. GDP,MG")
     p.add_argument("--model", default="auto", choices=["auto", "hybrid", "physics", "v1"],
                    help="auto: hybrid when PyTorch + fair-esm are installed, physics otherwise")
+    p.add_argument("--esm", default="650M", choices=["650M", "150M"],
+                   help="language model of the hybrid: 650M (more accurate) or 150M (lighter, faster)")
     p.add_argument("--device", default="cpu", help="PyTorch device for ESM-2 (cpu, cuda, mps)")
     p.add_argument("-o", "--out", default="crypsis_out", help="output folder")
     p.add_argument("--top", type=int, default=5, help="sites to print")
