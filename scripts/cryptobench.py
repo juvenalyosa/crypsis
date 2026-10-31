@@ -46,15 +46,28 @@ ESM_MODELS = {"150M": ("esm2_t30_150M_UR50D", 30, 640), "650M": ("esm2_t33_650M_
 
 # ------------------------------------------------------------------------------------------------ data
 
+def _dataset(data):
+    if _DATA.get("path") != data:
+        with open(os.path.join(data, "cryptobench-dataset", "dataset.json")) as fh:
+            _DATA.update(path=data, dataset=json.load(fh))
+    return _DATA["dataset"]
+
+
+def _pocket(h, chains):
+    """The residues of one holo record's apo pocket on the scored entity's chains (None when there are none)."""
+    return {k for k in h["apo_pocket_selection"] if k.split("_")[0] in chains} or None
+
+
 def pockets_of(data, apo):
-    """The distinct cryptic pockets of an apo chain (residue-key sets, one per holo structure's pocket)."""
-    if "dataset" not in _DATA:
-        _DATA["dataset"] = json.load(open(os.path.join(data, "cryptobench-dataset", "dataset.json")))
-    holos = _DATA["dataset"][apo]
+    """The distinct cryptic pockets of a scored apo entity (residue-key sets, one per holo structure's pocket), for
+    evaluation: every holo record counts with its pocket residues on the entity's chains."""
+    holos = _dataset(data)[apo]
+    chains = holos[0]["apo_chain"].split("-")
     out = []
     for h in holos:
-        if h["apo_chain"] == holos[0]["apo_chain"] and set(h["apo_pocket_selection"]) not in out:
-            out.append(set(h["apo_pocket_selection"]))
+        p = _pocket(h, set(chains))
+        if p and p not in out:
+            out.append(p)
     return out
 
 
@@ -62,9 +75,15 @@ _DATA = {}
 
 
 def entries(data, split):
-    """[(apo, chain, positive residue keys)] of a split: 'test', 'train-0'..'train-3' or 'train' (all four)."""
-    d = json.load(open(os.path.join(data, "cryptobench-dataset", "dataset.json")))
-    folds = json.load(open(os.path.join(data, "cryptobench-dataset", "folds.json")))
+    """[(apo, chain, positive residue keys)] of a split: 'test', 'train-0'..'train-3' or 'train' (all four).
+
+    Labels.  Test (evaluation) labels: a residue of the scored entity (the first record's apo_chain, e.g. "C-O") is
+    positive when it is in the apo pocket of any holo record of that apo structure.  Training labels keep the rule
+    the shipped models were trained with: only records whose apo_chain string equals the first record's count, which
+    misses pocket residues of records written with another chain string (258 residues in 16 training entries)."""
+    d = _dataset(data)
+    with open(os.path.join(data, "cryptobench-dataset", "folds.json")) as fh:
+        folds = json.load(fh)
     if split == "all":
         ids = sum(folds.values(), [])
     elif split == "train":
@@ -75,9 +94,12 @@ def entries(data, split):
     for apo in ids:
         holos = d[apo]
         chain = holos[0]["apo_chain"]
+        chains = set(chain.split("-"))
         pos = set()
         for h in holos:
-            if h["apo_chain"] == chain:
+            if split == "test":
+                pos |= _pocket(h, chains) or set()
+            elif h["apo_chain"] == chain:
                 pos |= set(h["apo_pocket_selection"])
         out.append((apo, chain, sorted(pos)))
     return out
@@ -230,12 +252,14 @@ def cmd_esm(a):
 def load_split(a, split, esm=None):
     """Per-protein records of a split: physics inputs, labels and (optionally) embeddings."""
     recs = []
-    for apo, ch, _pos in entries(a.data, split):
+    for apo, ch, pos in entries(a.data, split):
         f = os.path.join(a.work, "features", f"{apo}{ch}.npz")
         if not os.path.exists(f):
             continue
         z = np.load(f)
-        r = {"id": f"{apo}{ch}", "apo": apo, "feats": z["feats"], "shallow": z["shallow"], "y": z["y"].astype(int),
+        pos = set(pos)
+        y = np.array([1 if str(k) in pos else 0 for k in z["keys"]], dtype=int)   # labels of entries(), see there
+        r = {"id": f"{apo}{ch}", "apo": apo, "feats": z["feats"], "shallow": z["shallow"], "y": y,
              "names": [str(n) for n in z["names"]], "ca": z["ca"], "keys": [str(k) for k in z["keys"]]}
         if esm:
             r["emb"] = np.load(os.path.join(a.work, f"esm_{esm}", f"{apo}{ch}.npz"))["emb"].astype(np.float32)
