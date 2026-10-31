@@ -63,6 +63,31 @@ published ones:
 | Hybrid | AUC 0.881 / AUPRC 0.372 | AUC 0.880 / AUPRC 0.369 |
 | Physics | AUC 0.847 / AUPRC 0.283 | AUC 0.847 / AUPRC 0.283 |
 
+## Further analyses
+
+These scripts run the further benchmark analyses: embedding-only controls, models
+without ensembles, perturbation controls, the temporal hold-out set, homology and pretraining exposure, site types,
+size strata, conformer geometry and ensemble seeds. Each script's docstring gives its inputs and outputs. Their
+result files, the temporal set and the per-residue scores are attached to the GitHub release as a data archive.
+
+```bash
+PY=python                                                      # benchmark environment
+$PY scripts/controls.py columns && $PY scripts/controls.py paired
+$PY scripts/controls.py esm-only --esm 650M --pcs 256          # and --esm 150M --pcs 128
+$PY scripts/controls.py esm-strong --esm 650M --variant pooled # and --variant mlp
+$PY scripts/ablation_static.py --esm 650M --pcs 256
+$PY scripts/baselines.py fpocket --fpocket /path/to/fpocket
+$PY scripts/temporal_set.py validate|apocheck|cbref|search|download|pairs|select   # temporal set
+$PY scripts/heldout_eval.py --set cryptobench && $PY scripts/heldout_eval.py --set temporal
+$PY scripts/interaction.py
+$PY scripts/temporal_novelty.py fetch && $PY scripts/temporal_novelty.py homology   # needs Biopython
+$PY scripts/perturbation_controls.py run --set cryptobench && $PY scripts/perturbation_controls.py summary --set cryptobench
+$PY scripts/site_types.py && $PY scripts/size_strata.py && $PY scripts/ensemble_geometry.py --n 60
+for s in 1 2 3 4; do $PY scripts/seed_ensembles.py features --seed $s; done && $PY scripts/seed_ensembles.py summary
+$PY scripts/paper_figures.py data && python scripts/paper_figures.py plot   # plot needs matplotlib
+$PY scripts/paper_source_data.py
+```
+
 ## Development log (cross-validation on the training folds)
 
 All rows are 4-fold cross-validation over the 884 training proteins: pooled AUC / AUPRC. A change was kept only
@@ -178,19 +203,28 @@ What the differences say:
 | 0.2 hybrid 650M | 12.6% | **57.2%** |
 
 **Other methods.** The P2Rank and PocketMiner rows were scored by us on the same files for Crypsis 0.1; they cover
-221 of the 222 structures. The others are published numbers on the same test split, so their labels may differ
-slightly from these. Seq2Pocket computes AUPRC as the trapezoidal area under the precision–recall curve; on these
-scores it differs from average precision by less than 0.001.
+221 of the 222 structures. The other rows are published numbers on subsets of the test split, so they are not
+computed on exactly the same residues:
+- Seq2Pocket and its fine-tuned ESM-2 3B baseline (Škrhák, Gamouh & Hoksza, ACM-BCB 2025) use the 184 test
+  structures whose sites lie on a single chain (55,572 residues, 3,158 positive). The same subset here has 55,564
+  residues and 3,157 positives; on it (post hoc) the 0.2 hybrid scores 0.886 [0.864–0.906] / 0.420 [0.370–0.473]
+  and the physics model 0.859 [0.835–0.882] / 0.337 [0.290–0.386].
+- pLM-NN (CryptoBench paper, Table 5) is an MLP on frozen ESM-2 3B embeddings, scored chain by chain; most of that
+  table's statistics come from thresholded (0/1) predictions.
+- Seq2Pocket computes AUPRC as the trapezoidal area under the precision–recall curve; on these scores it differs
+  from average precision by less than 0.001.
 
-| Method | ROC AUC | AUPRC | Source |
-|---|---|---|---|
-| Seq2Pocket (ESM-2 3B fine-tuned) | 0.894 | 0.475 | Škrhák et al., bioRxiv 2026 |
-| **Crypsis 0.2 hybrid (650M)** | **0.889** | **0.393** | this work |
-| ESM-2 3B fine-tuned (CryptoBench baseline) | 0.871 | 0.382 | Škrhák et al., 2025 |
-| **Crypsis 0.2 physics** (no language model) | **0.864** | **0.320** | this work |
-| pLM-NN | 0.86 | 0.36 | Škrhák et al., 2025 |
-| P2Rank 2.5.1 | 0.788 | 0.191 | run by us |
-| PocketMiner | 0.762 | 0.173 | run by us |
+| Method | Test subset | ROC AUC | AUPRC | Source |
+|---|---|---|---|---|
+| Seq2Pocket (ESM-2 3B fine-tuned) | 184 single-chain | 0.894 | 0.475 | Škrhák et al., *Bioinformatics* 2026 |
+| **Crypsis 0.2 hybrid (650M)** | 184 single-chain | **0.886** | **0.420** | this work |
+| ESM-2 3B fine-tuned | 184 single-chain | 0.871 | 0.382 | Škrhák, Gamouh & Hoksza, 2025 |
+| **Crypsis 0.2 physics** (no language model) | 184 single-chain | **0.859** | **0.337** | this work |
+| **Crypsis 0.2 hybrid (650M)** | 222 | **0.889** | **0.393** | this work |
+| **Crypsis 0.2 physics** | 222 | **0.864** | **0.320** | this work |
+| pLM-NN (frozen ESM-2 3B) | all, chain by chain | 0.86 | 0.36 | Škrhák et al., 2025 (CryptoBench) |
+| P2Rank 2.5.1 | 221 | 0.788 | 0.191 | run by us |
+| PocketMiner | 221 | 0.762 | 0.173 | run by us |
 
 ## PocketMiner set
 

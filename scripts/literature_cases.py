@@ -29,7 +29,7 @@ CASES = [
     ("1MAZ", "A", "2YXJ", "A", "N3C", None, "BCL-xL: BH3 groove (ABT-737)"),
     ("1Z1M", "A", "1RV1", "A", "IMZ:110", None, "MDM2: p53 cleft (nutlin)"),
     ("1V4T", "A", "1V4S", "A", "MRK", None, "Glucokinase: allosteric activator site"),
-    ("2CM2", "A", "1T49", "A", "892", None, "PTP1B: allosteric site, needs helix a7 to unfold"),
+    ("2CM2", "A", "1T49", "A", "892", None, "PTP1B: allosteric site; helix a7 not modelled in either structure"),
     ("1WFC", "A", "3HVC", "A", "GG5:362", None, "p38a: C-lobe lipid pocket"),
     ("1DLO", "A,B", "1VRT", "A", "NVP", None, "HIV-1 RT: NNRTI pocket (Tyr181, Tyr188 rotate)"),
 ]
@@ -124,6 +124,7 @@ def main():
                     help="the crypsis source tree to run (default: this one)")
     ap.add_argument("--models", default="physics,hybrid")
     ap.add_argument("--esm", default="650M", help="hybrid language model; '-' for versions without the option")
+    ap.add_argument("--no-cofactors", action="store_true", help="drop the cofactors kept above (K-Ras: GDP, Mg)")
     a = ap.parse_args()
     from sklearn.metrics import roc_auc_score
 
@@ -131,6 +132,7 @@ def main():
     env = dict(os.environ, PYTHONPATH=os.path.abspath(a.src))
     rows = []
     for apo, chains, holo, hchain, lig, keep, desc in CASES:
+        keep = None if a.no_cofactors else keep
         true = true_site(a.pdb, apo, chains.split(","), holo, hchain, lig)
         row = {"apo": apo, "holo": holo, "site": desc, "true_site_residues": len(true)}
         for model in a.models.split(","):
