@@ -45,6 +45,10 @@ DIFFS = [("hybrid_650M", "physics"), ("hybrid_650M", "esm_only_650M"), ("physics
          ("physics", "physics_static"), ("hybrid_650M", "hybrid_static"), ("physics_static", "esm_only_650M"),
          ("hybrid_static", "esm_only_650M"), ("physics", "esm_pooled_650M"), ("physics", "esm_mlp_650M"),
          ("hybrid_650M", "esm_pooled_650M"), ("hybrid_650M", "esm_mlp_650M")]
+# second round of review: P2Rank and PocketMiner rerun on both sets (scripts/baselines.py); a separate Holm family,
+# so that the 16 comparisons above keep their adjustment
+BASELINE_DIFFS = [("physics", "p2rank"), ("hybrid_650M", "p2rank"), ("physics", "pocketminer"),
+                  ("hybrid_650M", "pocketminer")]
 
 
 def per_protein(scores, ys):
@@ -65,6 +69,13 @@ def per_protein_means(auc, ap, n=2000, seed=0):
     ci = lambda v: [round(float(np.percentile(v, 2.5)), 4), round(float(np.percentile(v, 97.5)), 4)]
     return {"mean_auc_per_protein": round(float(auc.mean()), 4), "mean_auc_per_protein_ci": ci(auc[idx].mean(1)),
             "mean_auprc_per_protein": round(float(ap.mean()), 4), "mean_auprc_per_protein_ci": ci(ap[idx].mean(1))}
+
+
+def per_protein_diff_ci(d, n=2000, seed=0):
+    """95% interval of the mean per-protein difference, over protein resamples (added after review)."""
+    rng = np.random.default_rng(seed)
+    m = d[rng.integers(0, len(d), (n, len(d)))].mean(1)
+    return [round(float(np.percentile(m, 2.5)), 4), round(float(np.percentile(m, 97.5)), 4)]
 
 
 def wilson(p, n, z=1.96):
@@ -107,6 +118,13 @@ def all_scores(recs, a):
         assert [str(k) for k in z["keys"]] == r["keys"], r["id"]
         fp.append(z["score"])
     out["fpocket"] = fp
+    for b in ("p2rank", "pocketminer"):                          # added after review, when the scores exist
+        if all(os.path.exists(os.path.join(a.work, b, f"{r['id']}.npz")) for r in recs):
+            out[b] = []
+            for r in recs:
+                z = np.load(os.path.join(a.work, b, f"{r['id']}.npz"))
+                assert [str(k) for k in z["keys"]] == r["keys"], r["id"]
+                out[b].append(z["score"])
     path = os.path.join(a.work, "ablation_static_scores.npz")
     if os.path.exists(path):
         z = np.load(path, allow_pickle=True)                      # our own file
@@ -151,13 +169,18 @@ def holm(ps):
 
 
 def add_holm(out):
-    """Holm adjustment within each subset and metric, over the comparisons in DIFFS (per-protein Wilcoxon tests)."""
+    """Holm adjustment within each subset and metric, over the comparisons in DIFFS (per-protein Wilcoxon tests and,
+    added after review, paired bootstrap tests of the pooled differences); BASELINE_DIFFS form their own family."""
+    base = {f"{x} - {y}" for x, y in BASELINE_DIFFS}
     for res in out.values():
         diffs = res["differences"]
-        for met in ("auc", "auprc"):
-            keys = list(diffs)
-            for k, q in zip(keys, holm([diffs[k]["per_protein"][f"{met}_wilcoxon_p"] for k in keys])):
-                diffs[k]["per_protein"][f"{met}_wilcoxon_p_holm"] = q
+        for family in ([k for k in diffs if k not in base], [k for k in diffs if k in base]):
+            for met in ("auc", "auprc"):
+                for k, q in zip(family, holm([diffs[k]["per_protein"][f"{met}_wilcoxon_p"] for k in family])):
+                    diffs[k]["per_protein"][f"{met}_wilcoxon_p_holm"] = q
+                if all(f"{met}_diff_p" in diffs[k] for k in family):
+                    for k, q in zip(family, holm([diffs[k][f"{met}_diff_p"] for k in family])):
+                        diffs[k][f"{met}_diff_p_holm"] = q
     return out
 
 
@@ -177,12 +200,14 @@ def evaluate(scores, recs, idx, a):
                                    median_auprc_per_protein=round(float(np.nanmedian(ap)), 4),
                                    **per_protein_means(auc, ap, a.boot),
                                    **{f"{k}_ci": wilson(v, len(idx)) for k, v in sites.items()})
-    for x, y in [d for d in DIFFS if d[0] in scores and d[1] in scores]:
+    for x, y in [d for d in DIFFS + BASELINE_DIFFS if d[0] in scores and d[1] in scores]:
         d = cb.bootstrap([scores[x][k] for k in idx], ys, n=a.boot, other=[scores[y][k] for k in idx])
         ok = ~np.isnan(pp[x][0])
         da, dp = pp[x][0][ok] - pp[y][0][ok], pp[x][1][ok] - pp[y][1][ok]
         res["differences"][f"{x} - {y}"] = {
             "auc_diff_ci": d["auc_diff_ci"], "auprc_diff_ci": d["auprc_diff_ci"],
+            "auc_diff_p": d["auc_diff_p"], "auprc_diff_p": d["auprc_diff_p"],
+            "mean_auc_per_protein_diff_ci": per_protein_diff_ci(da, a.boot),
             "per_protein": {"n": int(ok.sum()), "auc_median_diff": round(float(np.median(da)), 4),
                             "auc_wins": int((da > 0).sum()), "auc_wilcoxon_p": float(wilcoxon(da).pvalue),
                             "auprc_median_diff": round(float(np.median(dp)), 4),
@@ -195,6 +220,7 @@ def main():
     ap.add_argument("--set", choices=sorted(SETS), required=True)
     ap.add_argument("--boot", type=int, default=2000)
     ap.add_argument("--holm-only", action="store_true")
+    ap.add_argument("--jobs", type=int, default=1, help="subsets evaluated in parallel")
     a = ap.parse_args()
     a.data, a.work = SETS[a.set]
     path = os.path.join(a.work, f"heldout_{a.set}.json")
@@ -209,8 +235,13 @@ def main():
     recs = cb.load_split(a, "test")
     scores = all_scores(recs, a)
     out = {}
-    for name, idx in subsets(recs, a.data).items():
-        out[name] = evaluate(scores, recs, idx, a)
+    import concurrent.futures as cf
+
+    subs = subsets(recs, a.data)
+    with cf.ProcessPoolExecutor(min(a.jobs, len(subs))) as ex:     # subsets in parallel; same results
+        futs = {name: ex.submit(evaluate, scores, recs, idx, a) for name, idx in subs.items()}
+    for name, idx in subs.items():
+        out[name] = futs[name].result()
         print(f"== {a.set} {name}: {len(idx)} proteins", flush=True)
         for m, r in out[name]["models"].items():
             print(f"  {m:15s} AUC {r['auc']:.3f} {r['auc_ci']} AUPRC {r['auprc']:.3f} {r['auprc_ci']} "

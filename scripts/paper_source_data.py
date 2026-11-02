@@ -7,7 +7,7 @@ fig1_kras.csv            per-residue apo and ensemble pocket score, hybrid proba
 fig2_models.csv          pooled ROC AUC and AUPRC with 95% CIs, prevalence, per set and model
 fig3_differences.csv     paired differences with 95% CIs, per-protein wins and Holm-adjusted Wilcoxon P values
 fig4_perturbation.csv    perturbation controls: pooled metrics and differences to the shipped ensemble
-fig5_per_protein.csv     per-protein ROC AUC of every model, with the site state (CryptoBench only)
+fig5_per_protein.csv     per-protein ROC AUC of every model, with the ligand-based site state (both sets)
 """
 
 import csv
@@ -64,7 +64,7 @@ def main():
                          *(d.get("auc_diff_ci") or ["", ""]), *(d.get("auprc_diff_ci") or ["", ""])])
         pp = data["per_protein_auc"][s]
         ids = [f"{apo}_{chain}" for apo, chain, _pos in cb.entries(data_dir, "test")]
-        models = [m for m in pp if m != "site_state"]
+        models = [m for m in pp if m not in ("site_state", "ids")]
         assert all(len(pp[m]) == len(ids) for m in models)
         for i, pid in enumerate(ids):
             per.append([s, pid, *[pp[m][i] for m in models], pp["site_state"][i] if "site_state" in pp else ""])

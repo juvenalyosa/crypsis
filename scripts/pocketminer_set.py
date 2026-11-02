@@ -11,6 +11,10 @@ proteins of a set are pooled (2 is left out, as in the paper) for one ROC AUC, w
 proteins.  The label dictionaries are pickled numpy objects; they are read with an unpickler that accepts only numpy
 arrays and builtin containers.  "Unseen" test proteins have no chain of >= 50% sequence identity among the
 CryptoBench training chains (--cryptobench: the work folder of scripts/cryptobench.py, for their sequences).
+
+Second round of review: P2Rank and PocketMiner scored on the same files and labels, with their per-residue scores
+kept (--prep writes the structures as <split>_<id>.pdb; P2Rank and scripts/pocketminer_run.py are run on that folder;
+--collect-p2rank converts P2Rank's output; --baselines adds both to the report, unseen subset included).
 """
 
 import argparse
@@ -89,9 +93,45 @@ def pooled_auc(scores, ys, n=2000, seed=0):
             "proteins": len(scores), "residues": int(len(y)), "positives": int(y.sum())}
 
 
+def prep(a):
+    """Copy every structure of both sets to <dir>/<split>_<id>.pdb, for running P2Rank and PocketMiner on them."""
+    import shutil
+
+    os.makedirs(a.prep, exist_ok=True)
+    for split in ("val", "test"):
+        for ident in (str(i) for i in np.load(os.path.join(a.pm, f"{split}_apo_ids_with_chainids.npy"))):
+            shutil.copyfile(structure_file(a.pm, ident), os.path.join(a.prep, f"{split}_{ident}.pdb"))
+    print("->", a.prep)
+
+
+def collect_p2rank(a, raw, out):
+    """P2Rank residue probabilities (<raw>/<name>.pdb_residues.csv) in core.read_chain's residue order."""
+    from crypsis import core
+
+    os.makedirs(out, exist_ok=True)
+    for f in sorted(os.listdir(raw)):
+        if not f.endswith(".pdb_residues.csv"):
+            continue
+        name = f[: -len(".pdb_residues.csv")]
+        chain = core.read_chain(os.path.join(a.prep, f"{name}.pdb"))
+        prob = {}
+        with open(os.path.join(raw, f)) as fh:
+            head = [h.strip() for h in fh.readline().split(",")]
+            for ln in fh:
+                row = dict(zip(head, (v.strip() for v in ln.split(","))))
+                prob[f"{row['chain']}_{row['residue_label']}"] = float(row["probability"])
+        np.save(os.path.join(out, f"{name}.npy"), np.array([prob.get(k, 0.0) for k in chain.res_keys]))
+    print("->", out)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--pm", required=True)
+    ap.add_argument("--prep", help="second round of review: copy the structures here and exit (see prep)")
+    ap.add_argument("--collect-p2rank", nargs=2, metavar=("RAW", "OUT"),
+                    help="convert P2Rank output for the --prep files to <OUT>/<split>_<id>.npy and exit")
+    ap.add_argument("--baselines", default="",
+                    help="name=dir,...: per-residue scores <dir>/<split>_<id>.npy (P2Rank, PocketMiner) to score too")
     ap.add_argument("--cryptobench", required=True, help="scripts/cryptobench.py work folder (training sequences)")
     ap.add_argument("--data", default=os.path.expanduser("~/crypsis_data/cryptobench"))
     ap.add_argument("--out", required=True)
@@ -100,8 +140,14 @@ def main():
     ap.add_argument("--esm", default="650M", help="hybrid language model; '-' for versions without the option")
     a = ap.parse_args()
     sys.path.insert(0, os.path.abspath(a.src))
+    if a.prep and not a.collect_p2rank:
+        return prep(a)
+    if a.collect_p2rank:
+        return collect_p2rank(a, *a.collect_p2rank)
     import cryptobench as cb
     from crypsis import core, pipeline
+
+    baselines = dict(b.split("=", 1) for b in a.baselines.split(",") if b)
 
     os.makedirs(a.out, exist_ok=True)
     env = dict(os.environ, PYTHONPATH=os.path.abspath(a.src))
@@ -112,7 +158,8 @@ def main():
     for split in ("val", "test"):
         ids = [str(i) for i in np.load(os.path.join(a.pm, f"{split}_apo_ids_with_chainids.npy"))]
         labels = load_labels(os.path.join(a.pm, f"{split}_label_dictionary.npy"))
-        per = {m: ([], [], []) for m in a.models.split(",")}
+        per = {m: ([], [], []) for m in a.models.split(",") + list(baselines)}
+        missing = {b: [] for b in baselines}
         for ident in ids:
             path = structure_file(a.pm, ident)
             lab = label_of(labels, ident)
@@ -121,7 +168,19 @@ def main():
                 raise ValueError(f"{ident}: {len(lab)} labels for {chain.n_res} residues")
             new = unseen("".join(pipeline.sequences(chain)), train)
             keep = lab != 2
-            for m in per:
+            for b, d in baselines.items():
+                f = os.path.join(d, f"{split}_{ident}.npy")
+                if not os.path.exists(f):
+                    missing[b].append(ident)
+                    continue
+                prob = np.load(f)                                  # float array written by our runs
+                if len(prob) != len(lab):
+                    missing[b].append(ident)
+                    continue
+                per[b][0].append(prob[keep])
+                per[b][1].append(lab[keep].astype(int))
+                per[b][2].append(new)
+            for m in a.models.split(","):
                 cache = os.path.join(a.out, f"{split}_{ident}_{m}.json")
                 if not os.path.exists(cache):
                     chains = ",".join(sorted({k.split("_")[0] for k in chain.res_keys}))
@@ -133,7 +192,11 @@ def main():
                 per[m][0].append(prob[keep])
                 per[m][1].append(lab[keep].astype(int))
                 per[m][2].append(new)
+        for b, miss in missing.items():
+            report[f"{split} {b} missing"] = miss
         for m, (scores, ys, news) in per.items():
+            if not scores:
+                continue
             report[f"{split} {m}"] = pooled_auc(scores, ys)
             if split == "test":
                 sel = [i for i, u in enumerate(news) if u]

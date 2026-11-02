@@ -384,6 +384,11 @@ def bootstrap(scores, ys, n=2000, seed=0, other=None):
     if other is not None:
         out["auc_diff_ci"] = ci(diff)
         out["auprc_diff_ci"] = ci(diff_ap)
+        # two-sided paired bootstrap P of the pooled difference (added after review): the share of resamples on
+        # the other side of zero, doubled; at most 1, and no smaller than 1/n
+        p = lambda v: float(min(1.0, max(2 * min(np.mean(np.asarray(v) <= 0), np.mean(np.asarray(v) >= 0)), 1 / n)))
+        out["auc_diff_p"] = p(diff)
+        out["auprc_diff_p"] = p(diff_ap)
     return out
 
 
