@@ -89,7 +89,8 @@ def temporal_sensitivity():
         rows.append(" & ".join([name, str(r["proteins"]), str(r["records"]),
                                 f"{half_up(100 * m['physics']['positive_rate'], 1)}\\%",
                                 half_up(m["hybrid_650M"]["auc"]), half_up(m["physics"]["auc"]),
-                                half_up(m["esm_only_650M"]["auc"]), ci(pe["auc_diff_ci"]), pfmt(pe["auc_diff_p_holm"]),
+                                half_up(m["esm_only_650M"]["auc"]), ci(pe["auc_diff_ci"]),
+                                ("$\\leq$" if pe["auc_diff_p"] <= 1 / 2000 else "") + pfmt(pe["auc_diff_p_holm"]),
                                 pfmt(pe["per_protein"]["auc_wilcoxon_p_holm"]), ci(hp["auc_diff_ci"])]) + " \\\\")
     return "\n".join(rows)
 

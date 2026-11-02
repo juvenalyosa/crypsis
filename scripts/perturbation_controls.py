@@ -33,6 +33,13 @@ Second round of review.  `extra` adds, in <work>/perturbation_extra/<id>.npz:
 paired Wilcoxon tests of `slow` against each control, Holm over the controls) and pooled AUC after ranking each
 protein's scores within the protein (the learned models see these columns rank-normalized within a protein).
 Results: <work>/perturbation_per_protein.json.
+
+`strain` measures how much each kind of copy deforms the elastic network, since a Calpha RMSD is not a common
+currency across kinds of motion (second round of review): for the same copies as `run` and `extra` (same seeds),
+the ANM energy per residue, (1/2N) d^T H d with H the Hessian of core.anm_hessian, the mean absolute change of the
+Calpha-Calpha distances of the network pairs (within the ANM cut-off in the apo structure) and the share of those
+pairs that change by more than 1 A; each averaged over the copies, then the median over proteins.  Rigid moves have
+zero strain by construction.  Results: <work>/perturbation_strain.json.
 """
 
 import argparse
@@ -167,6 +174,75 @@ def _one_extra(job):
         return apo, f"error {type(exc).__name__}: {exc}"
 
 
+STRAIN_KINDS = [("slow", 1.0), ("slow", 1.5), ("slow", 3.0), ("slow", 5.0), ("fast", 1.0), ("fast", 3.0),
+                ("fast", 5.0), ("random", 1.0), ("random", 3.0), ("smooth", 1.0), ("smooth", 3.0), ("smooth", 5.0)]
+
+
+def _one_strain(job):
+    apo, chain_id, data = job
+    from scipy.spatial import cKDTree
+
+    from crypsis import core
+
+    out = {"id": f"{apo}{chain_id}"}
+    try:
+        ch = core.read_chain(os.path.join(data, "cif", f"{apo}.cif.gz"), chains=chain_id.split("-"))
+        p = dict(core.DEFAULTS, **(core.load_model().get("params") or {}))
+        n, k, nconf = ch.n_res, int(p["n_modes"]), int(p["n_conformers"])
+        ca = ch.xyz[ch.ca_index]
+        hess = core.anm_hessian(ca, p["anm_cutoff_A"])
+        pairs = cKDTree(ca).query_pairs(p["anm_cutoff_A"], output_type="ndarray")
+        r0 = np.linalg.norm(ca[pairs[:, 1]] - ca[pairs[:, 0]], axis=1)
+        vals, modes = core.anm_modes(ca, p["anm_cutoff_A"], 2 * k)
+        v_slow, m_slow = core.anm_modes(ca, p["anm_cutoff_A"], k)
+        d2 = ((ca[:, None, :] - ca[None, :, :]) ** 2).sum(-1)
+        kern = np.exp(-d2 / (2 * L_SMOOTH ** 2))
+        out["n_res"], out["pairs"] = int(n), int(len(pairs))
+        for name, amp in STRAIN_KINDS:
+            rng = np.random.default_rng(p["seed"])
+            if name == "slow":
+                xs = core.conformers(ch, v_slow, m_slow, nconf, amp, p["seed"])
+            elif name == "fast":
+                xs = core.conformers(ch, vals[k:2 * k], modes[k:2 * k], nconf, amp, p["seed"])
+            elif name == "random":
+                xs = [_scaled(ch, rng.normal(size=(n, 3)), amp) for _ in range(nconf)]
+            else:
+                xs = [_scaled(ch, kern @ rng.normal(size=(n, 3)), amp) for _ in range(nconf)]
+            e, dr, big = [], [], []
+            for x in xs:
+                c = x[ch.ca_index]
+                d = (c - ca).ravel()
+                e.append(0.5 * float(d @ (hess @ d)) / n)
+                r = np.linalg.norm(c[pairs[:, 1]] - c[pairs[:, 0]], axis=1)
+                dr.append(float(np.abs(r - r0).mean()))
+                big.append(float((np.abs(r - r0) > 1.0).mean()))
+            out[f"{name}_{amp:g}"] = {"energy_per_res": round(float(np.mean(e)), 4),
+                                      "pair_dr_mean_A": round(float(np.mean(dr)), 4),
+                                      "pair_dr_over_1A": round(float(np.mean(big)), 4)}
+    except Exception as exc:
+        out["error"] = f"{type(exc).__name__}: {exc}"
+    return out
+
+
+def cmd_strain(a):
+    jobs = [(apo, ch, a.data) for apo, ch, _pos in cb.entries(a.data, "test")]
+    rows, t0 = [], time.time()
+    with cf.ProcessPoolExecutor(a.workers) as ex:
+        for k, r in enumerate(ex.map(_one_strain, jobs), 1):
+            rows.append(r)
+            if k % 20 == 0 or k == len(jobs):
+                print(f"[{k}/{len(jobs)}] {time.time() - t0:.0f} s", flush=True)
+    ok = [r for r in rows if "error" not in r]
+    summary = {"proteins": len(rows), "analysed": len(ok), "errors": {r["id"]: r["error"] for r in rows if "error" in r}}
+    for name, amp in STRAIN_KINDS:
+        key = f"{name}_{amp:g}"
+        summary[key] = {m: round(float(np.median([r[key][m] for r in ok])), 4)
+                        for m in ("energy_per_res", "pair_dr_mean_A", "pair_dr_over_1A")}
+    print(json.dumps(summary, indent=1))
+    with open(os.path.join(a.work, "perturbation_strain.json"), "w") as fh:
+        json.dump({"summary": summary, "proteins": rows}, fh, indent=1)
+
+
 def cmd_extra(a):
     out = os.path.join(a.work, "perturbation_extra")
     os.makedirs(out, exist_ok=True)
@@ -281,13 +357,14 @@ def cmd_summary(a):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["run", "summary", "extra", "per-protein"])
+    ap.add_argument("command", choices=["run", "summary", "extra", "per-protein", "strain"])
     ap.add_argument("--set", choices=sorted(SETS), default="cryptobench")
     ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))
     ap.add_argument("--boot", type=int, default=2000)
     a = ap.parse_args()
     a.data, a.work = SETS[a.set]
-    {"run": cmd_run, "summary": cmd_summary, "extra": cmd_extra, "per-protein": cmd_per_protein}[a.command](a)
+    {"run": cmd_run, "summary": cmd_summary, "extra": cmd_extra, "per-protein": cmd_per_protein,
+     "strain": cmd_strain}[a.command](a)
 
 
 if __name__ == "__main__":
