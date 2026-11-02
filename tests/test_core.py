@@ -81,3 +81,48 @@ def test_v1_model_file_is_consistent():
     assert set(model["features"]) <= set(cp.FEATURES)
     assert len(model["coef"]) == len(model["features"]) == len(model["mean"])
     assert "CryptoBench" in model["trained_on"]
+
+
+def _rotated(chain, seed=3):
+    from scipy.spatial.transform import Rotation
+
+    rot = Rotation.random(random_state=seed).as_matrix()
+    shift = np.array([31.7, -12.2, 55.9])
+    return cp.Chain(chain.xyz @ rot.T + shift, chain.atom_res, chain.res_keys, chain.res_names, chain.ca_index,
+                    chain.bfac, chain.atom_names, chain.motion_res), rot, shift
+
+
+def test_canonical_frame_is_bit_identical_across_orientations(lysozyme):
+    moved, _, _ = _rotated(lysozyme)
+    a, b = cp.in_canonical_frame(lysozyme), cp.in_canonical_frame(moved)
+    assert np.array_equal(a.xyz, b.xyz)
+    origin, axes = a.frame
+    assert np.allclose(axes @ axes.T, np.eye(3)) and np.isclose(np.linalg.det(axes), 1.0)
+    assert np.abs(cp.to_input_frame(a, a.xyz) - lysozyme.xyz).max() < 1e-3
+
+
+def test_predictions_do_not_depend_on_the_orientation_of_the_file(lysozyme):
+    moved, rot, shift = _rotated(lysozyme)
+    a, b = cp.analyze(lysozyme), cp.analyze(moved)
+    assert np.array_equal(a["probability"], b["probability"])
+    assert [s["residues"] for s in a["sites"]] == [s["residues"] for s in b["sites"]]
+    assert np.abs(a["pocket_points"] @ rot.T + shift - b["pocket_points"]).max() < 1e-3
+    for sa, sb in zip(a["sites"], b["sites"]):
+        assert np.abs(np.array(sa["centre"]) @ rot.T + shift - np.array(sb["centre"])).max() < 0.02
+
+
+def test_input_frame_option_keeps_the_old_behaviour(lysozyme):
+    moved, _, _ = _rotated(lysozyme)
+    a = cp.analyze(lysozyme, params={"frame": "input"})
+    b = cp.analyze(moved, params={"frame": "input"})
+    assert not np.array_equal(a["probability"], b["probability"])
+
+
+def test_disconnected_network_has_no_free_rigid_modes(lysozyme):
+    ca = lysozyme.xyz[lysozyme.ca_index]
+    two = np.vstack([ca, ca + np.array([100.0, 0.0, 0.0])])
+    assert cp.rigid_body_modes(ca) == 6 and cp.rigid_body_modes(two) == 12
+    vals, modes = cp.anm_modes(two, n_modes=10)
+    assert vals[0] > 1e-6
+    one, _ = cp.anm_modes(ca, n_modes=5)
+    assert np.allclose(vals[::2][:5], one, rtol=1e-6) and np.allclose(vals[1::2][:5], one, rtol=1e-6)

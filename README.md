@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org)
-![CryptoBench AUC 0.888](https://img.shields.io/badge/CryptoBench%20AUC-0.888-d94801.svg)
+![CryptoBench AUC 0.892](https://img.shields.io/badge/CryptoBench%20AUC-0.892-d94801.svg)
 ![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)
 
 *Crypsis* is the biological term for an organism avoiding detection. **Cryptic pockets** do something similar:
@@ -27,10 +27,10 @@ with a ready-made docking box.
 
 ```
 $ crypsis predict 4ldj.cif --chains A --keep GDP,MG
-crypsis hybrid (ESM-2 650M) model, 170 residues, 2 sites (17 s)
+crypsis hybrid (ESM-2 650M) model, 170 residues, 2 sites (14 s)
 rank  score   n  kind               volume A3 (structure -> ensemble)  residues
-   1   2.04   5  forms with motion  15 -> 24                           Val9 Thr58 Ala59 Gly60 Gln61
-   2   0.86   4  forms with motion  0 -> 10                            Lys5 Asp38 Ile55 Leu56
+   1   3.39  10  forms with motion  33 -> 30                           Val9 Gly10 Ala11 Cys12 Glu37 Asp38 Thr58 Ala59 Gly60 Gln61
+   2   1.03   4  forms with motion  17 -> 26                           Met67 Arg68 Tyr71 Thr74
 ```
 
 This run is on K-Ras G12C with GDP bound but no drug (PDB 4LDJ). The switch-II pocket, where sotorasib binds, is
@@ -53,8 +53,8 @@ ranked first.
 ## Highlights
 
 - **More accurate than the reference tools on the same structures.** On the CryptoBench test set, the residue
-  ROC AUC is 0.888, and the physics model alone (no language model) reaches 0.864. With the earlier labels on
-  which P2Rank (0.788) and PocketMiner (0.762) were scored, Crypsis reached 0.889, with about twice their AUPRC.
+  ROC AUC is 0.892, and the physics model alone (no language model) reaches 0.867. With the earlier labels on
+  which P2Rank (0.788) and PocketMiner (0.762) were scored, Crypsis 0.2 reached 0.889, with about twice their AUPRC.
 - **Explainable.** Each site is a real pocket on a grid, with a measured volume in the structure and along the
   motions, not just a residue score.
 - **Fast enough for a laptop.** 6–30 s per protein on a 2018 laptop CPU with the C++ grid (see
@@ -186,7 +186,7 @@ including what did not help.
 
 ### CryptoBench test set
 
-The table covers all 222 apo structures (74,046 residues), scored with the shipped models of Crypsis 0.2.1. A
+The table covers all 222 apo structures (74,046 residues), scored with the shipped models of Crypsis 0.3. A
 residue is positive when it lines the pocket of any holo record of its apo structure, on any chain of the scored
 entity (see [BENCHMARK.md](BENCHMARK.md#protocol); an earlier version of the scripts missed 101 positives in 7
 multi-chain entries).
@@ -196,9 +196,10 @@ multi-chain entries).
 
 | Method | ROC AUC [95% CI] | AUPRC [95% CI] | Median AUC per protein | True site ranked 1st | True site in top 3 |
 |---|---|---|---|---|---|
-| **Crypsis 0.2 hybrid** (physics + ESM-2 650M) | **0.888** [0.870–0.905] | **0.394** [0.350–0.439] | **0.932** | 48% | 62% |
-| Crypsis 0.2 hybrid, `--esm 150M` | 0.884 [0.866–0.901] | 0.374 [0.331–0.418] | 0.928 | **50%** | **63%** |
-| Crypsis 0.2 physics | 0.864 [0.844–0.882] | 0.323 [0.283–0.364] | 0.895 | 40% | 53% |
+| **Crypsis 0.3 hybrid** (physics + ESM-2 650M) | **0.892** [0.874–0.907] | **0.396** [0.351–0.442] | **0.928** | **52%** | **62%** |
+| Crypsis 0.3 hybrid, `--esm 150M` | 0.888 [0.872–0.904] | 0.380 [0.337–0.426] | 0.922 | 47% | 60% |
+| Crypsis 0.3 physics | 0.867 [0.848–0.883] | 0.322 [0.282–0.364] | 0.898 | 43% | 55% |
+| Crypsis 0.2.1 hybrid (physics + ESM-2 650M) | 0.888 [0.870–0.905] | 0.394 [0.350–0.439] | 0.932 | 48% | 62% |
 | Crypsis 0.1 hybrid (ESM-2 150M) | 0.881 [0.863–0.897] | 0.376 [0.333–0.419] | 0.919 | 46% | 61% |
 | Crypsis 0.1 physics | 0.848 [0.828–0.866] | 0.288 [0.251–0.329] | 0.892 | 40% | 50% |
 | P2Rank 2.5.1 † | 0.788 [0.769–0.805] | 0.191 [0.163–0.226] | 0.832 | | |
@@ -206,6 +207,14 @@ multi-chain entries).
 
 † Run by us on the same files for Crypsis 0.1, with the earlier label rule, on the 221 structures where every
 method ran.
+
+**Changes from 0.2.1 to 0.3.** Version 0.3 builds the pocket grid in the structure's own frame and handles
+separate pieces of the elastic network (see [Reproducibility](#how-it-works)); the models were retrained with the
+same inputs and settings. On residue metrics the two versions are equivalent: every paired bootstrap interval of
+0.3 − 0.2.1 contains zero, on this test set (AUC −0.002 to +0.009, AUPRC −0.015 to +0.018 across the three models)
+and on the temporal hold-out set of the paper (AUC −0.005 to +0.007, AUPRC −0.026 to +0.010). Site rates moved by
+up to 4 points either way, the scale of the orientation noise that 0.3 removes. Details in
+[BENCHMARK.md](BENCHMARK.md#crypsis-03-frame-invariant-pocket-grid).
 
 **Changes from 0.1 to 0.2.** These are paired bootstrap differences (95% CI):
 
@@ -218,32 +227,34 @@ method ran.
 **Published results on CryptoBench test subsets.** These numbers come from the papers, not from our runs, and
 they are not computed on exactly the same residues as the table above:
 - Seq2Pocket and its fine-tuned ESM-2 3B baseline evaluate the 184 test structures whose binding sites lie on a
-  single chain. On that subset (our runs, post hoc), Crypsis 0.2 scores AUC 0.886 [0.864–0.906] and AUPRC
-  0.420 [0.370–0.473].
+  single chain. On that subset (our runs, post hoc), Crypsis 0.3 scores AUC 0.890 [0.868–0.908] and AUPRC
+  0.419 [0.368–0.471].
 - pLM-NN, the CryptoBench paper's baseline, is scored on all test structures but chain by chain, and most of that
   paper's statistics come from thresholded (0/1) predictions.
 
 | Method | Test subset | ROC AUC | AUPRC |
 |---|---|---|---|
 | Seq2Pocket (fine-tuned ESM-2 3B + smoothing; Škrhák et al., 2026) | 184 single-chain | 0.894 | 0.475 |
-| **Crypsis 0.2 hybrid** (our run) | 184 single-chain | **0.886** | **0.420** |
+| **Crypsis 0.3 hybrid** (our run) | 184 single-chain | **0.890** | **0.419** |
 | Fine-tuned ESM-2 3B (Škrhák, Gamouh & Hoksza, 2025) | 184 single-chain | 0.871 | 0.382 |
-| **Crypsis 0.2 hybrid** (our run) | all 222 | **0.888** | **0.394** |
+| **Crypsis 0.3 hybrid** (our run) | all 222 | **0.892** | **0.396** |
 | pLM-NN, MLP on frozen ESM-2 3B (CryptoBench paper) | all, chain by chain | 0.86 | 0.36 |
 
 Crypsis is not the most precise predictor on this benchmark. Seq2Pocket's fine-tuned 3-billion-parameter language
-model ranks residues more precisely (AUPRC 0.475 against 0.420 on the same subset). Crypsis is close in AUC, uses
+model ranks residues more precisely (AUPRC 0.475 against 0.419 on the same subset). Crypsis is close in AUC, uses
 a frozen and much smaller language model, and adds what a sequence model cannot: explicit pockets with volumes, how they open, and a docking box.
 
 A residue picked at random is a cryptic-site residue 5.4% of the time, so that is the AUPRC of a random
-predictor. Per protein, the 0.2 hybrid has both the fewest failures and the most near-perfect predictions:
+predictor. Per protein, the 0.3 hybrid has the fewest failures, and the hybrids have the most near-perfect predictions:
 
 | Model | Proteins with AUC < 0.6 | Proteins with AUC > 0.9 |
 |---|---|---|
 | Crypsis 0.1 physics | 17.6% | 47.7% |
-| Crypsis 0.2 physics | 14.4% | 49.5% |
+| Crypsis 0.2.1 physics | 14.4% | 49.5% |
+| Crypsis 0.3 physics | 12.2% | 49.1% |
 | Crypsis 0.1 hybrid | 12.6% | 56.8% |
-| Crypsis 0.2 hybrid | 12.6% | **58.1%** |
+| Crypsis 0.2.1 hybrid | 12.6% | **58.1%** |
+| Crypsis 0.3 hybrid | **11.3%** | 56.8% |
 
 ### Independent benchmark: the PocketMiner set
 
@@ -253,8 +264,10 @@ have no chain with at least 50% sequence identity in the CryptoBench training fo
 
 | Method | Test set, 35 proteins | Test proteins unseen in CryptoBench training, 20 | Validation set, 26 proteins |
 |---|---|---|---|
-| **Crypsis 0.2 hybrid** | **0.919** [0.866–0.963] | **0.888** [0.809–0.954] | 0.854 [0.692–0.946] |
-| Crypsis 0.2 physics | 0.891 [0.825–0.946] | 0.863 [0.764–0.945] | 0.816 [0.622–0.932] |
+| **Crypsis 0.3 hybrid** | **0.918** [0.868–0.960] | **0.887** [0.812–0.953] | 0.878 [0.733–0.955] |
+| Crypsis 0.3 physics | 0.897 [0.834–0.948] | 0.863 [0.769–0.947] | 0.876 [0.718–0.959] |
+| Crypsis 0.2.1 hybrid | 0.919 [0.866–0.963] | 0.888 [0.809–0.954] | 0.854 [0.692–0.946] |
+| Crypsis 0.2.1 physics | 0.891 [0.825–0.946] | 0.863 [0.764–0.945] | 0.816 [0.622–0.932] |
 | Crypsis 0.1 hybrid | 0.907 [0.863–0.947] | 0.882 [0.821–0.937] | 0.846 [0.671–0.944] |
 | Crypsis 0.1 physics | 0.877 [0.819–0.936] | 0.848 [0.762–0.935] | 0.803 [0.572–0.935] |
 | PocketMiner † | 0.868 [0.783–0.935] | – | **0.897** [0.840–0.955] |
@@ -269,24 +282,27 @@ selection, which favours it in the last column. The confidence intervals are wid
 ### Eight cryptic sites from the literature
 
 The true site is every apo residue within 4.5 Å of the drug or ligand in the holo structure. Each cell gives the
-AUC within the protein and the rank of the first predicted site that finds the true one. Both versions are scored
+AUC within the protein and the rank of the first predicted site that finds the true one. All versions are scored
 with the same labels (`scripts/literature_cases.py`). K-Ras is run with GDP kept as a cofactor.
 
-| Protein and site (apo → holo) | 0.1 physics | 0.1 hybrid | 0.2 physics | 0.2 hybrid |
-|---|---|---|---|---|
-| K-Ras G12C + GDP: switch-II pocket, sotorasib (4LDJ → 6OIM) | 0.89, not found | 0.88, **#1** | 0.84, **#1** | 0.88, **#1** |
-| TEM-1 β-lactamase: opens when helices 11/12 separate (1ZG4 → 1PZO) | 0.55, not found | 0.62, **#1** | 0.51, not found | 0.59, not found |
-| BCL-xL: BH3 groove, ABT-737 (1MAZ → 2YXJ) | 0.91, **#1** | 0.86, **#1** | 0.91, **#1** | 0.90, **#1** |
-| MDM2: p53 cleft, nutlin (1Z1M → 1RV1) | 0.78, not found | 0.83, **#1** | 0.77, not found | 0.79, not found |
-| Glucokinase: allosteric activator site (1V4T → 1V4S) | 0.79, #3 | 0.67, not found | 0.67, **#1** | 0.64, not found |
-| PTP1B: allosteric site ~20 Å from the active site; helix α7 is not modelled in either structure (2CM2 → 1T49) | 0.39, not found | 0.40, not found | 0.57, not found | 0.59, not found |
-| p38α: C-lobe lipid pocket (1WFC → 3HVC) | 0.37, not found | 0.40, not found | 0.62, not found | 0.49, not found |
-| HIV-1 RT: NNRTI pocket, Tyr181 and Tyr188 rotate (1DLO → 1VRT) | 0.69, not found | 0.63, not found | 0.66, not found | 0.66, not found |
+| Protein and site (apo → holo) | 0.1 physics | 0.1 hybrid | 0.2.1 physics | 0.2.1 hybrid | 0.3 physics | 0.3 hybrid |
+|---|---|---|---|---|---|---|
+| K-Ras G12C + GDP: switch-II pocket, sotorasib (4LDJ → 6OIM) | 0.89, not found | 0.88, **#1** | 0.84, **#1** | 0.88, **#1** | 0.87, **#1** | 0.91, **#1** |
+| TEM-1 β-lactamase: opens when helices 11/12 separate (1ZG4 → 1PZO) | 0.55, not found | 0.62, **#1** | 0.51, not found | 0.59, not found | 0.52, #3 | 0.61, not found |
+| BCL-xL: BH3 groove, ABT-737 (1MAZ → 2YXJ) | 0.91, **#1** | 0.86, **#1** | 0.91, **#1** | 0.90, **#1** | 0.89, **#1** | 0.90, **#1** |
+| MDM2: p53 cleft, nutlin (1Z1M → 1RV1) | 0.78, not found | 0.83, **#1** | 0.77, not found | 0.79, not found | 0.72, not found | 0.79, not found |
+| Glucokinase: allosteric activator site (1V4T → 1V4S) | 0.79, #3 | 0.67, not found | 0.67, **#1** | 0.64, not found | 0.79, #3 | 0.75, not found |
+| PTP1B: allosteric site ~20 Å from the active site; helix α7 is not modelled in either structure (2CM2 → 1T49) | 0.39, not found | 0.40, not found | 0.57, not found | 0.59, not found | 0.50, not found | 0.49, not found |
+| p38α: C-lobe lipid pocket (1WFC → 3HVC) | 0.37, not found | 0.40, not found | 0.62, not found | 0.49, not found | 0.42, not found | 0.45, not found |
+| HIV-1 RT: NNRTI pocket, Tyr181 and Tyr188 rotate (1DLO → 1VRT) | 0.69, not found | 0.63, not found | 0.66, not found | 0.66, not found | 0.66, not found | 0.60, not found |
 
-Eight cases are anecdotes next to 222 test proteins, and here 0.2 does not beat 0.1.
+Eight cases are anecdotes next to 222 test proteins, and here neither 0.2.1 nor 0.3 beats 0.1.
 - **0.1 hybrid:** ranks four of the eight sites first.
-- **0.2 hybrid:** ranks two first.
-- **TEM-1 and MDM2:** the 0.1 hybrid ranks these sites first; the 0.2 hybrid misses them.
+- **0.2.1 and 0.3 hybrids:** rank two first, K-Ras and BCL-xL.
+- **TEM-1 and MDM2:** the 0.1 hybrid ranks these sites first; the later hybrids miss them.
+- **Glucokinase:** the 0.2.1 physics model ranked it first and the 0.3 one ranks it third. Changes of this size
+  between 0.2.1 and 0.3 are what the orientation of the file used to do (see
+  [Reproducibility](#how-it-works)).
 - **PTP1B, p38α and HIV-1 RT:** no version finds these sites. They need unfolding, large side-chain rotations, or
   a site absent from the apo crystal.
 
@@ -337,9 +353,9 @@ of RAM, use `--esm 150M`.
 
    | Model | Inputs | Learner | Test AUC |
    |---|---|---|---|
-   | `hybrid` | 49 physics columns + 256 principal components of the ESM-2 650M embeddings (layer 33) | gradient-boosted trees | 0.888 |
-   | `hybrid --esm 150M` | 49 physics columns + 128 principal components of ESM-2 150M (layer 30) | gradient-boosted trees | 0.884 |
-   | `physics` | 49 physics columns | gradient-boosted trees | 0.864 |
+   | `hybrid` | 49 physics columns + 256 principal components of the ESM-2 650M embeddings (layer 33) | gradient-boosted trees | 0.892 |
+   | `hybrid --esm 150M` | 49 physics columns + 128 principal components of ESM-2 150M (layer 30) | gradient-boosted trees | 0.888 |
+   | `physics` | 49 physics columns | gradient-boosted trees | 0.867 |
    | `v1` | 3 ensemble descriptors | logistic regression | 0.807 * |
 
    \* Scored with the earlier label rule (see [CryptoBench test set](#cryptobench-test-set)).
@@ -357,10 +373,23 @@ Crypsis fixes every mode's sign (the sum of the cubes of its components is posit
 Python environments sample the same ensemble and give the same probabilities. In 0.2.0, another environment could
 flip a few modes and change probabilities by up to 0.1.
 
+**Orientation of the input file.** The pocket grid is aligned with the coordinate axes. Up to 0.2.1 it was built
+in the frame of the input file, so rotating the same structure changed the pockets: on 30 CryptoBench test
+proteins, three random rigid moves changed the per-protein AUC by a median of 0.03 and up to 0.22, and changed the
+first site in 20 of them. Since 0.3, Crypsis computes everything in the structure's own frame (centred on its Cα
+atoms, along their principal axes with fixed signs) and returns pocket points and docking boxes in the frame of the
+file, so a rotated file gives the same probabilities and sites. `params={"frame": "input"}` restores the old
+behaviour.
+
+**Separate chains and domains.** When parts of a structure are more than 15 Å apart, the elastic network has
+several pieces, each with its own six rigid-body motions. Up to 0.2.1 only six were skipped, so the remaining free
+motions of the other pieces were sampled as if they were slow modes. Since 0.3 the rigid-body motions of every piece
+are skipped.
+
 ## Limitations
 
 - **Precision.** A fine-tuned 3-billion-parameter language model (Seq2Pocket) ranks cryptic-site residues more
-  precisely: AUPRC 0.475 against 0.420 on the 184 single-chain test structures. Crypsis's physics descriptors seem
+  precisely: AUPRC 0.475 against 0.419 on the 184 single-chain test structures. Crypsis's physics descriptors seem
   to have reached what the apo structure alone can tell. Adding probe mapping, larger ensembles or single-side-chain moves did not improve them (see
   [BENCHMARK.md](BENCHMARK.md)).
 - **Very large rearrangements.** Some sites are missed by every method tested:

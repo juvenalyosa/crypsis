@@ -190,7 +190,9 @@ def predict(structure, chains=None, keep_cofactors=None, model="auto", embedding
 
     Reproducibility: the sign of each normal mode is arbitrary and the LAPACK build decides it; core.anm_modes fixes
     it (core.canonical_signs), so the ensemble and the probabilities do not depend on the computer, the environment
-    or whether PyTorch was imported first."""
+    or whether PyTorch was imported first.  Everything is computed in the structure's own frame
+    (core.in_canonical_frame), so they do not depend on the orientation of the file either; pocket points and
+    docking boxes are returned in the frame of the file.  params={"frame": "input"} reproduces Crypsis <= 0.2.1."""
     chain = structure if isinstance(structure, core.Chain) else core.read_chain(
         structure, chains=list(chains) if chains else None, keep_hetero=keep_cofactors)
     if model == "auto":
@@ -203,6 +205,9 @@ def predict(structure, chains=None, keep_cofactors=None, model="auto", embedding
         raise ImportError("the hybrid model needs PyTorch and fair-esm: pip install 'crypsis[esm]'")
     v1 = core.load_model()
     p = dict(v1.get("params") or {}, **(params or {}))
+    inp = chain
+    if dict(core.DEFAULTS, **p)["frame"] == "canonical":
+        chain = core.in_canonical_frame(inp)
     feats, extra = core.features(chain, p, progress=progress)
     if model == "v1":
         prob, threshold = core.apply_model(v1, feats), core.THRESHOLD
@@ -229,8 +234,11 @@ def predict(structure, chains=None, keep_cofactors=None, model="auto", embedding
     sites = core.sites_from_scores(chain, prob, st["residue_volume"], extra["ens_volume_mean"],
                                    extra["open_fraction"], threshold=threshold, static_points=st["points"][big],
                                    frames=extra["frames"], grid_A=extra["params"]["grid_A"])
+    points = core.to_input_frame(chain, st["points"][big])
+    if chain is not inp:
+        core.sites_in_input_frame(sites, inp, points)
     return {"model": model, "esm": esm if model == "hybrid" else None, "residues": chain.res_keys,
             "residue_names": chain.res_names, "probability": prob,
             "open_fraction": extra["open_fraction"], "static_score": st["residue_score"],
-            "pocket_points": st["points"][big], "sites": sites, "extension": core.have_extension(),
-            "chain": chain}
+            "pocket_points": points, "sites": sites, "extension": core.have_extension(),
+            "chain": inp}

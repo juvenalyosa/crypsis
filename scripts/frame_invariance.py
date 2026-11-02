@@ -2,16 +2,20 @@
 """Does a prediction depend on the coordinate frame of the input file?  Second round of review.
 
     python scripts/frame_invariance.py         # CryptoBench test split, 30 proteins chosen at random (seed 0)
+    python scripts/frame_invariance.py --frame input --out ~/crypsis_data/work/frame_invariance.json   # <= 0.2.1
 
 The pocket grid is aligned with the axes of the input file, so a rigid rotation and translation of the same
 structure changes which grid points are free and buried.  For each chosen protein the shipped physics model
 (pipeline.predict) is run on the structure as distributed and after three random rigid moves (scipy Rotation.random
 with seeds 1-3, and a translation drawn uniformly within +-5 A).  Reported per protein: per-protein ROC AUC in each
 frame, the largest change of a residue's probability, the Spearman correlation of the probabilities with the
-original frame, and whether site 1 changes (Jaccard index of its residues with the original's below 0.5).  Results:
-~/crypsis_data/work/frame_invariance.json.
+original frame, and whether site 1 changes (Jaccard index of its residues with the original's below 0.5).
+
+--frame input builds the grid in the frame of the file, as Crypsis <= 0.2.1 did (the second-round result); the
+default, canonical, is the frame of Crypsis >= 0.3, where every number above should be 0 (or 1 for Spearman).
 """
 
+import argparse
 import concurrent.futures as cf
 import copy
 import json
@@ -36,7 +40,7 @@ def _one(job):
 
     from crypsis import core, pipeline
 
-    apo, chain, pos = job
+    apo, chain, pos, frame = job
     ch = core.read_chain(os.path.join(DATA, "cif", f"{apo}.cif.gz"), chains=chain.split("-"))
     y = np.array([k in set(pos) for k in ch.res_keys], dtype=int)
     centre = ch.xyz.mean(0)
@@ -46,7 +50,7 @@ def _one(job):
         if k:
             rng = np.random.default_rng(k)
             c.xyz = (ch.xyz - centre) @ Rotation.random(random_state=k).as_matrix().T + centre + rng.uniform(-5, 5, 3)
-        r = pipeline.predict(c, model="physics")
+        r = pipeline.predict(c, model="physics", params={"frame": frame})
         probs.append(np.asarray(r["probability"], float))
         sites.append(set(r["sites"][0]["residues"]) if r["sites"] else set())
     jac = [len(sites[0] & s) / max(len(sites[0] | s), 1) for s in sites[1:]]
@@ -58,19 +62,24 @@ def _one(job):
 
 
 def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--frame", default="canonical", choices=["canonical", "input"])
+    ap.add_argument("--out", default=os.path.expanduser("~/crypsis_data/work_v03/frame_invariance.json"))
+    ap.add_argument("--workers", type=int, default=3)
+    a = ap.parse_args()
     ents = cb.entries(DATA, "test")
     pick = sorted(np.random.default_rng(0).choice(len(ents), N, replace=False).tolist())
-    with cf.ProcessPoolExecutor(3, max_tasks_per_child=1) as ex:
-        rows = list(ex.map(_one, [ents[i] for i in pick]))
+    with cf.ProcessPoolExecutor(a.workers) as ex:
+        rows = list(ex.map(_one, [(*ents[i], a.frame) for i in pick]))
     rng_auc = [max(r["auc"]) - min(r["auc"]) for r in rows]
-    summary = {"proteins": len(rows), "moves": MOVES,
+    summary = {"frame": a.frame, "proteins": len(rows), "moves": MOVES,
                "auc_range_median": round(float(np.median(rng_auc)), 4), "auc_range_max": round(float(max(rng_auc)), 4),
                "max_abs_change_median": round(float(np.median([r["max_abs_change"] for r in rows])), 4),
                "max_abs_change_max": round(float(max(r["max_abs_change"] for r in rows)), 4),
                "spearman_min_median": round(float(np.median([r["spearman_min"] for r in rows])), 4),
                "site1_changes": int(sum(r["site1_changes"] for r in rows))}
     print(json.dumps(summary, indent=1))
-    with open(os.path.expanduser("~/crypsis_data/work/frame_invariance.json"), "w") as fh:
+    with open(a.out, "w") as fh:
         json.dump({"summary": summary, "proteins": rows}, fh, indent=1)
 
 
