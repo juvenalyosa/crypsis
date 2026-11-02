@@ -132,6 +132,8 @@ def _one_features(job):
         if ch.n_res > 1500:
             return apo, "too large", 0.0
         p = dict(core.load_model().get("params") or {})
+        if dict(core.DEFAULTS, **p)["frame"] == "canonical":        # as pipeline.predict (Crypsis >= 0.3)
+            ch = core.in_canonical_frame(ch)
         feats, extra = core.features(ch, p)
         shallow = pipeline.shallow_pass(ch, extra)
         y = np.array([1 if k in set(pos) else 0 for k in ch.res_keys], dtype=np.int8)
@@ -181,6 +183,8 @@ def _one_extra(job):
         z = np.load(feat)
         assert [str(k) for k in z["keys"]] == ch.res_keys, "residues differ from the features file"
         p = dict(core.load_model().get("params") or {})
+        if dict(core.DEFAULTS, **p)["frame"] == "canonical":
+            ch = core.in_canonical_frame(ch)
         s0 = z["feats"][:, core.FEATURES.index("score")]
         if kind == "descriptors":
             x = descriptors.descriptors(ch, static_score=s0, params=p)

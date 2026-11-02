@@ -43,6 +43,7 @@ DEFAULTS = {
     "n_conformers": 24,
     "rmsd_A": 3.0,
     "seed": 7,
+    "frame": "canonical",        # "input": pocket grid in the frame of the file, as Crypsis <= 0.2.1
 }
 
 
@@ -62,6 +63,7 @@ class Chain:
         # atoms of kept cofactors have atom_res -1 (they occupy space but are not scored) and move with the nearest
         # residue in the ensemble (motion_res)
         self.motion_res = np.asarray(motion_res if motion_res is not None else self.atom_res, dtype=int)
+        self.frame = None                       # (origin, axes) when in_canonical_frame made this copy
 
     @property
     def n_res(self):
@@ -142,6 +144,62 @@ def read_chain(path, chains=None, model=0, keep_hetero=None):
     return Chain(xyz, atom_res, keys, names, ca, bf, anames, motion)
 
 
+# ------------------------------------------------------------------------------------------------ frame
+
+def canonical_frame(ca_xyz):
+    """(origin, axes) of a structure's own frame: centred on its Calpha atoms, axes (rows of ``axes``) along their
+    principal axes, largest variance first; the first two point to the side where the Calpha atoms are skewed
+    (third moment, or the farthest atom when that is ~0) and the third is their cross product.  The pocket grid is
+    aligned with the coordinate axes, so without this the pockets and the probabilities depend on how the input
+    file happens to be oriented (Crypsis <= 0.2.1)."""
+    x = np.asarray(ca_xyz, dtype=float)
+    origin = x.mean(axis=0)
+    y = x - origin
+    _, vecs = np.linalg.eigh(y.T @ y)
+    axes = np.ascontiguousarray(vecs[:, ::-1].T)
+    for k in range(2):
+        proj = y @ axes[k]
+        skew = float((proj ** 3).sum())
+        if abs(skew) < 1e-6 * float((np.abs(proj) ** 3).sum()):
+            skew = proj[int(np.argmax(np.abs(proj)))]
+        if skew < 0:
+            axes[k] *= -1.0
+    axes[2] = np.cross(axes[0], axes[1])
+    return origin, axes
+
+
+def in_canonical_frame(chain, decimals=3):
+    """A copy of ``chain`` in its canonical frame, coordinates rounded to ``decimals`` (the precision of a PDB file)
+    so that two orientations of the same file give bit-identical coordinates; ``frame`` keeps (origin, axes) for
+    to_input_frame."""
+    origin, axes = canonical_frame(chain.xyz[chain.ca_index])
+    out = Chain(np.round((chain.xyz - origin) @ axes.T, decimals), chain.atom_res, chain.res_keys, chain.res_names,
+                chain.ca_index, chain.bfac, chain.atom_names, chain.motion_res)
+    out.frame = (origin, axes)
+    return out
+
+
+def to_input_frame(chain, xyz):
+    """Coordinates computed on in_canonical_frame(input) back in the frame of the input file."""
+    xyz = np.asarray(xyz, dtype=float)
+    if getattr(chain, "frame", None) is None or not len(xyz):
+        return xyz
+    origin, axes = chain.frame
+    return xyz @ axes + origin
+
+
+def sites_in_input_frame(sites, chain, points):
+    """Docking boxes and centres of sites found on a canonical-frame chain, recomputed in the input frame
+    (``chain``: the input chain, ``points``: pocket points already in its frame)."""
+    index = {k: i for i, k in enumerate(chain.res_keys)}
+    ca = chain.xyz[chain.ca_index]
+    for s in sites:
+        idx = np.array([index[r] for r in s["residues"]])
+        s["docking_box"] = docking_box(chain, idx, points)
+        s["centre"] = [round(float(v), 2) for v in ca[idx].mean(axis=0)]
+    return sites
+
+
 # ------------------------------------------------------------------------------------------------ ANM
 
 def anm_hessian(ca_xyz, cutoff=15.0):
@@ -170,21 +228,40 @@ def anm_hessian(ca_xyz, cutoff=15.0):
     return sparse.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(3 * n, 3 * n))
 
 
+def rigid_body_modes(ca_xyz, cutoff=15.0):
+    """Number of zero-frequency ANM modes: 6 per connected component of the network (5 for a component of two
+    nodes, 3 for an isolated node).  A structure whose chains or domains are farther apart than ``cutoff`` has
+    several components, and each brings its own rigid-body motions."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    from scipy.spatial import cKDTree
+
+    x = np.asarray(ca_xyz, dtype=float)
+    n = len(x)
+    pairs = cKDTree(x).query_pairs(cutoff, output_type="ndarray")
+    adj = coo_matrix((np.ones(len(pairs)), (pairs[:, 0], pairs[:, 1])), shape=(n, n))
+    _, lab = connected_components(adj, directed=False)
+    return int(sum(3 if s == 1 else 5 if s == 2 else 6 for s in np.bincount(lab)))
+
+
 def anm_modes(ca_xyz, cutoff=15.0, n_modes=30):
-    """Lowest ``n_modes`` non-trivial ANM modes: (eigenvalues, vectors [n_modes, N, 3]).  Dense LAPACK up to
-    1200 residues, sparse shift-invert Lanczos above (memory grows with the contacts, not N^2)."""
+    """Lowest ``n_modes`` non-trivial ANM modes: (eigenvalues, vectors [n_modes, N, 3]).  The rigid-body modes of
+    every connected component are skipped (rigid_body_modes), so a disconnected network gives the internal modes
+    of each component and no free translations or rotations.  Dense LAPACK up to 1200 residues, sparse
+    shift-invert Lanczos above (memory grows with the contacts, not N^2)."""
     hess = anm_hessian(ca_xyz, cutoff)
     n = hess.shape[0] // 3
-    k = min(3 * n - 6, int(n_modes))
+    z = rigid_body_modes(ca_xyz, cutoff)
+    k = min(3 * n - z, int(n_modes))
     if n <= 1200:
         from scipy.linalg import eigh
 
-        vals, vecs = eigh(hess.toarray(), subset_by_index=[6, 6 + k - 1])
+        vals, vecs = eigh(hess.toarray(), subset_by_index=[z, z + k - 1])
     else:
         from scipy.sparse.linalg import eigsh
 
-        vals, vecs = eigsh(hess, k=k + 6, sigma=-1e-3, which="LM")
-        order = np.argsort(vals)[6:6 + k]
+        vals, vecs = eigsh(hess, k=k + z, sigma=-1e-3, which="LM")
+        order = np.argsort(vals)[z:z + k]
         vals, vecs = vals[order], vecs[:, order]
     return vals, canonical_signs(vecs.T).reshape(k, n, 3)
 
@@ -505,6 +582,9 @@ def analyze(chain, params=None, progress=None, model=None):
     """Residue probabilities, sites and the numbers behind them for one structure (any number of chains)."""
     model = model or load_model()
     p = dict(model.get("params") or {}, **(params or {}))
+    inp = chain
+    if dict(DEFAULTS, **p)["frame"] == "canonical":
+        chain = in_canonical_frame(inp)
     feats, extra = features(chain, p, progress=progress)
     prob = apply_model(model, feats)
     st = extra["static"]
@@ -512,7 +592,10 @@ def analyze(chain, params=None, progress=None, model=None):
     sites = sites_from_scores(chain, prob, st["residue_volume"], extra["ens_volume_mean"], extra["open_fraction"],
                               static_points=st["points"][big], frames=extra["frames"],
                               grid_A=extra["params"]["grid_A"])
+    points = to_input_frame(chain, extra["static"]["points"])
+    if chain is not inp:
+        sites_in_input_frame(sites, inp, to_input_frame(chain, st["points"][big]))
     return {"residues": chain.res_keys, "residue_names": chain.res_names, "probability": prob,
             "open_fraction": extra["open_fraction"], "static_score": extra["static"]["residue_score"],
-            "pocket_points": extra["static"]["points"], "sites": sites, "extension": have_extension(),
+            "pocket_points": points, "sites": sites, "extension": have_extension(),
             "threshold": THRESHOLD}

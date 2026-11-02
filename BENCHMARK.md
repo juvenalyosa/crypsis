@@ -169,16 +169,57 @@ The site rates moved more: hybrid 650M 51% → 48% first, 64% → 60% top 3; hyb
 physics 41% → 39% and 55% → 52%. Two equally valid ensembles of the same structures thus change these rates by up to
 7 points, which is the scale to keep in mind when comparing site rates.
 
+### Crypsis 0.3: frame-invariant pocket grid
+
+The pocket grid is aligned with the coordinate axes, and up to 0.2.1 it was built in the frame of the input file.
+A rigid rotation of the same structure therefore changed which grid points were free and buried. On 30 test
+proteins with three random rigid moves each (`scripts/frame_invariance.py --frame input`), the per-protein AUC of
+the physics model changed by a median of 0.03 and up to 0.22, and the first site changed in 20 of the 30. Crypsis
+0.3 computes everything in the structure's own frame (`core.in_canonical_frame`: centred on the Cα atoms, along
+their principal axes, the first two pointing to the side of positive third moment, the third their cross product,
+coordinates rounded to 0.001 Å) and returns pocket points and docking boxes in the frame of the file. The same 30
+proteins and moves now give identical probabilities, bit for bit, and the same sites (`scripts/frame_invariance.py`).
+
+The second change is in the elastic network. When parts of a structure are more than 15 Å apart, the network has
+several connected components, each with six rigid-body modes. Up to 0.2.1 only six zero modes were skipped, so the
+free motions of the other components were sampled as slow modes. Since 0.3, `core.rigid_body_modes` counts the
+zero modes of every component. One CryptoBench test structure (4ILG A) is affected.
+
+The features of both sets were recomputed, the models retrained with the same inputs and settings, and both test
+sets scored once. As for 0.2.1, this is a correction of the method: nothing was tuned, and the 0.3 models replace
+the 0.2.1 ones whatever their score. The grid-based columns change a good deal from one frame to the other: across
+the 1,106 CryptoBench chains, the median within-protein Spearman correlation between the 0.2.1 and 0.3 values is
+0.83 for the pocket score of the structure and 0.90 for its ensemble mean. The other columns are unchanged.
+Cross-validation on the training folds, hybrid 650M: AUC 0.884, AUPRC 0.374 (0.2.1: 0.885 / 0.378).
+
+Paired differences, 0.3 − 0.2.1 (95% CI over 2,000 protein resamples):
+
+| Model | CryptoBench test, AUC | AUPRC | Temporal set, AUC | AUPRC |
+|---|---|---|---|---|
+| Physics | −0.002 to +0.007 | −0.015 to +0.015 | −0.005 to +0.005 | −0.026 to +0.006 |
+| Hybrid 650M | −0.001 to +0.008 | −0.010 to +0.013 | −0.004 to +0.004 | −0.012 to +0.010 |
+| Hybrid 150M | −0.000 to +0.009 | −0.005 to +0.018 | −0.001 to +0.007 | −0.020 to +0.003 |
+
+Every interval contains zero. The site rates on CryptoBench moved by up to 4 points: hybrid 650M 48% → 52% first,
+62% → 62% top 3; hybrid 150M 50% → 47% and 63% → 60%; physics 40% → 43% and 53% → 55%. On the temporal set, hybrid
+650M 35% → 32% and 46% → 45%. These moves are of the size that the orientation of the input file used to cause.
+The `v1` logistic model (`crypsis.analyze`) was not refitted; its three inputs are now computed in the canonical
+frame.
+
 ## CryptoBench test set (222 structures)
 
 The models are scored as shipped: the exported trees and the package's own input pipeline. The site rates use the
-definition above. The 0.2 rows are Crypsis 0.2.1 (see [fixed mode signs](#crypsis-021-fixed-mode-signs)). All rows
+definition above. The 0.3 rows are the current models (see [frame-invariant pocket grid](#crypsis-03-frame-invariant-pocket-grid));
+the 0.2 rows are Crypsis 0.2.1 (see [fixed mode signs](#crypsis-021-fixed-mode-signs)). All rows
 use the corrected label rule (Protocol); 4,000 of the 74,046 residues (5.4%) are positive.
 
 | Model | ROC AUC [95% CI] | AUPRC [95% CI] | Median AUC per protein | Site 1st | Site top 3 |
 |---|---|---|---|---|---|
-| **0.2 hybrid, ESM-2 650M** | **0.888** [0.870–0.905] | **0.394** [0.350–0.439] | **0.932** | 48% | 62% |
-| 0.2 hybrid, ESM-2 150M | 0.884 [0.866–0.901] | 0.374 [0.331–0.418] | 0.928 | **50%** | **63%** |
+| **0.3 hybrid, ESM-2 650M** | **0.892** [0.874–0.907] | **0.396** [0.351–0.442] | 0.928 | **52%** | 62% |
+| 0.3 hybrid, ESM-2 150M | 0.888 [0.872–0.904] | 0.380 [0.337–0.426] | 0.922 | 47% | 60% |
+| 0.3 physics | 0.867 [0.848–0.883] | 0.322 [0.282–0.364] | 0.898 | 43% | 55% |
+| 0.2 hybrid, ESM-2 650M | 0.888 [0.870–0.905] | 0.394 [0.350–0.439] | **0.932** | 48% | 62% |
+| 0.2 hybrid, ESM-2 150M | 0.884 [0.866–0.901] | 0.374 [0.331–0.418] | 0.928 | 50% | **63%** |
 | 0.2 physics | 0.864 [0.844–0.882] | 0.323 [0.283–0.364] | 0.895 | 40% | 53% |
 | 0.1 hybrid (ESM-2 150M) | 0.881 [0.863–0.897] | 0.376 [0.333–0.419] | 0.919 | 46% | 61% |
 | 0.1 physics | 0.848 [0.828–0.866] | 0.288 [0.251–0.329] | 0.892 | 40% | 50% |
@@ -206,6 +247,8 @@ What the differences say:
 | 0.2 physics | 14.4% | 49.5% |
 | 0.1 hybrid | 12.6% | 56.8% |
 | 0.2 hybrid 650M | 12.6% | **58.1%** |
+| 0.3 physics | 12.2% | 49.1% |
+| 0.3 hybrid 650M | **11.3%** | 56.8% |
 
 **Other methods.** The P2Rank and PocketMiner rows were scored by us on the same files for Crypsis 0.1, with the
 earlier label rule (their scores were not kept); they cover 221 of the 222 structures. The other rows are published numbers on subsets of the test split, so they are not
@@ -238,6 +281,8 @@ CryptoBench training chain with at least 50% sequence identity: 20 of the 35.
 
 | Pooled ROC AUC [95% CI] | Test, 35 | Unseen test, 20 | Validation, 26 |
 |---|---|---|---|
+| 0.3 hybrid (650M) | 0.918 [0.868–0.960] | 0.887 [0.812–0.953] | 0.878 [0.733–0.955] |
+| 0.3 physics | 0.897 [0.834–0.948] | 0.863 [0.769–0.947] | 0.876 [0.718–0.959] |
 | 0.2.1 hybrid (650M) | 0.919 [0.866–0.963] | 0.888 [0.809–0.954] | 0.854 [0.692–0.946] |
 | 0.2.1 physics | 0.891 [0.825–0.946] | 0.863 [0.764–0.945] | 0.816 [0.622–0.932] |
 | 0.2.0 hybrid (650M) | 0.920 [0.868–0.963] | 0.893 [0.813–0.959] | 0.873 [0.724–0.955] |
@@ -246,14 +291,15 @@ CryptoBench training chain with at least 50% sequence identity: 20 of the 35.
 | 0.1 physics | 0.877 [0.819–0.936] | 0.848 [0.762–0.935] | 0.803 [0.572–0.935] |
 
 The 0.2.0 and 0.2.1 rows differ only in the mode signs, so they show how much an equally valid ensemble moves
-these small sets (up to 0.02 on validation). The 0.1 values match those published with Crypsis 0.1 (test hybrid 0.907) within 0.005. The "unseen" subset of
+these small sets (up to 0.02 on validation). The 0.3 rows differ from 0.2.1 by the frame of the grid; the
+validation set, with 26 proteins, moved by up to 0.06 (physics 0.816 → 0.876), inside its wide intervals. The 0.1 values match those published with Crypsis 0.1 (test hybrid 0.907) within 0.005. The "unseen" subset of
 0.1 had 23 proteins, from an earlier definition that was not recorded.
 
 ## Eight literature cases
 
 `scripts/literature_cases.py`. The true site is every apo residue within 4.5 Å of the ligand in the holo
 structure, matched by sequence alignment. Where a ligand is present twice, only the copy in the described site is
-used. Both versions of Crypsis are scored with the same labels; see the README for the table.
+used. All versions of Crypsis are scored with the same labels; see the README for the table.
 
 ## What did not help, and why it matters
 
